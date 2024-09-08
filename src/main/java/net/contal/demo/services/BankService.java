@@ -1,16 +1,22 @@
 package net.contal.demo.services;
 
+import net.contal.demo.AccountNumberUtil;
 import net.contal.demo.DbUtils;
+import net.contal.demo.modal.BankTransaction;
 import net.contal.demo.modal.CustomerAccount;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
 import javax.transaction.Transactional;
 import java.util.Date;
+import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 
+import com.google.gson.JsonObject;
+import com.google.gson.JsonParser;
+
 /**
- * TODO complete this service class
  * TODO use BankServiceTest class
  */
 @Service
@@ -26,91 +32,157 @@ public class BankService {
 
 
     /**
-     * TODO implement the rest , populate require fields for CustomAccount (Generate Back account by using AccountNumberUtil )
-     * Save customAccount to database
-     * return AccountNumber
-     * @param customerAccount populate this (firstName , lastName ) already provided
+     * @param customerAccount firstName, lastName already provided
      * @return accountNumber
      */
     public String createAnAccount(CustomerAccount customerAccount){
-            // TODO implement the rest
+        int accountNumber = AccountNumberUtil.generateAccountNumber();
+        customerAccount.setAccountNumber(accountNumber);
 
+        customerAccount.setAccountBalance(0.0);
 
         dbUtils.openASession().saveOrUpdate(customerAccount);
-        //TODO return bank account number
-        return "";
+
+        return String.valueOf(accountNumber);
     }
 
 
     /**
-     * TODO implement this functions
      * @param accountNumber target account number
      * @param amount amount to register as transaction
      * @return boolean , if added as transaction
      */
     public boolean addTransactions(int accountNumber , Double amount){
 
-        /**
-         *TODO
-         * Find and account by using accountNumber (Only write  the query in hql String  )
-         * create Transaction for account with provided  amount
-         * return true if added , return false if account dont exist , or amount is null
-         */
+        if (amount == null){
+            return false;
+        }
 
-        /** TODO write Query to get account by number un comment section below , catch query   */
-// HAlf code
-//                 String hql = "";
-//                 this.dbUtils.openASession().createQuery(hql,CustomerAccount.class)
-//                .setParameter("accountNumber",accountNumber)
-//                .getResultList();
+        String hql = "FROM CustomerAccount WHERE accountNumber = :accountNumber";
+        List<CustomerAccount> accounts = dbUtils.openASession()
+                .createQuery(hql, CustomerAccount.class)
+                .setParameter("accountNumber", accountNumber)
+                .getResultList();
 
+        if (accounts.isEmpty()) {
+            return false;
+        }
 
-        return false;
+        CustomerAccount account = accounts.get(0);
+
+        BankTransaction transaction = new BankTransaction();
+        transaction.setCustomerAccount(account);
+        transaction.setTransactionAmount(amount);
+        transaction.setTransactionDate(new Date());
+
+        // Saves the transaction
+        dbUtils.openASession().saveOrUpdate(transaction);
+
+        return true;
     }
 
 
     /**
-     * TODO implement this functions
      * @param accountNumber target account
      * @return account balance
      */
     public double getBalance(int accountNumber){
 
-        /**
-         *TODO
-         *  find the account by this account Number
-         *  sum total of transactions belong to account
-         *  return sum of amount
-         *
-         */
+        String hql = "FROM CustomerAccount WHERE accoutNumber = :accountNumber";
 
-//                 String hql = "";
-//                 this.dbUtils.openASession().createQuery(hql,CustomerAccount.class)
-//                .setParameter("accountNumber",accountNumber)
-//                .getResultList();
+        List<CustomerAccount> accounts = dbUtils.openASession()
+                .createQuery(hql, CustomerAccount.class)
+                .setParameter("accountNumber", accountNumber)
+                .getResultList();
+        if(accounts.isEmpty()){
+            return 0d;
+        }
 
+        CustomerAccount account =  accounts.get(0);
+        double totalBalance = 0.0;
 
-
-        return 0d;
+        for (BankTransaction transaction: account.getTransactions()){
+            totalBalance += transaction.getTransactionAmount();
+        }
+        return totalBalance;
     }
 
 
     /**
-     * TODO implement this functions
-     * ADVANCE TASK
      * @param accountNumber accountNumber
      * @return HashMap [key: date , value: double]
      */
     public Map<Date,Double> getDateBalance(int accountNumber){
-        /**
-         *TODO
-         * get all bank Transactions for this account number
-         * Create map , Each Entry should hold a Date as a key and value as balance on key date from start of account
-         * Example data [01/01/1992 , 2000$] balance 2000$ that date 01/01/1992
-         */
+        Map<Date, Double> dateBalanceMap = new HashMap<>();
+        String hql = "FROM BankTransaction WHERE customerAccount.accountNumber = :accountNumber ORDER BY transactionDate";
+        List<BankTransaction> transactions = dbUtils.openASession()
+                .createQuery(hql, BankTransaction.class)
+                .setParameter("accountNumber", accountNumber)
+                .getResultList();
 
-        return null;
+        double cumulativeBalance = 0.0;
+        for (BankTransaction transaction: transactions) {
+            cumulativeBalance += transaction.getTransactionAmount();
+
+            Date transactionDate = transaction.getTransactionDate();
+            dateBalanceMap.put(transactionDate, cumulativeBalance);
+        }
+        return dateBalanceMap;
+
     }
+
+    public Map<Date, Double> getCumulativeBalanceByTransactionDate(String jsonInput) {
+        Map<Date, Double> dateBalanceMap = new HashMap<>();
+        double cumulativeBalance = 0.0;
+
+        try {
+            JsonObject jsonObject = JsonParser.parseString(jsonInput).getAsJsonObject();
+            int accountNumber = jsonObject.get("accountNumber").getAsInt();
+
+            String hql = "FROM BankTransaction WHERE customerAccount.accountNumber = :accountNumber ORDER BY transactionDate";
+            List<BankTransaction> transactions = dbUtils.openASession()
+                    .createQuery(hql, BankTransaction.class)
+                    .setParameter("accountNumber", accountNumber)
+                    .getResultList();
+
+            for (BankTransaction transaction : transactions) {
+                cumulativeBalance += transaction.getTransactionAmount();
+                Date transactionDate = transaction.getTransactionDate();
+                dateBalanceMap.put(transactionDate, cumulativeBalance);
+            }
+        } catch (Exception e) {
+            // e.printStackTrace(); // Log the exception using the app Logger
+        }
+
+        return dateBalanceMap;
+    }
+
+    public List<BankTransaction> getLastTransactions(int accountNumber, int maxTransactions) {
+        String hql = "FROM BankTransaction WHERE customerAccount.accountNumber = :accountNumber ORDER BY transactionDate DESC";
+        List<BankTransaction> transactions = dbUtils.openASession()
+                .createQuery(hql, BankTransaction.class)
+                .setParameter("accountNumber", accountNumber)
+                .setMaxResults(10)
+                .getResultList();
+
+        return transactions;
+    }
+
+    public CustomerAccount getAccountDetails(int accountNumber) {
+        String hql = "FROM CustomerAccount WHERE accountNumber = :accountNumber";
+        List<CustomerAccount> accounts = dbUtils.openASession()
+                .createQuery(hql, CustomerAccount.class)
+                .setParameter("accountNumber", accountNumber)
+                .getResultList();
+
+        if (accounts.isEmpty()) {
+            return null;
+        }
+
+        return accounts.get(0);
+    }
+
+
 
 
 }
